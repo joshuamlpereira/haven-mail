@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<!--
+  Haven Mail — suspect's mailbox
+  UToledo Cybersecurity Summer Camp / Packet Sniffer Detective CTF
+
+  Students reach this URL by solving the terminal challenge (the URL is the flag),
+  then sign in with the credentials they sniffed out of the packet capture. Those
+  creds belong to the suspect, so signing in drops them into the suspect's mailbox.
+
+  Each of the six team logins decrypts to a DIFFERENT set of coordinates (a real
+  US landmark), and those coordinates are buried in an ordinary-looking email in a
+  cluttered inbox, so students have to actually read the mail to find them.
+
+  Login is checked in-browser against SHA-256 hashes (no plaintext passwords in
+  source); it's gate-theater, not real auth.
+
+  Bonus flag for the curious who View-Source:  FLAG{UT_CYBER_2026_CASE_CLOSED}
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Haven Mail</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg:#eef1f4; --surface:#ffffff; --raised:#f7f8fa;
+    --ink:#1b2430; --dim:#6b7280; --faint:#9aa4b2;
+    --line:#e4e8ee; --brand:#0f766e; --brand-dk:#0b5c55; --brand-tint:#e6f3f1;
+    --danger:#dc2626; --unread:#0f172a;
+    --sans:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html, body { height:100%; }
+  body { font-family:var(--sans); color:var(--ink); background:var(--bg); -webkit-font-smoothing:antialiased; }
+
+  /* ============ LOGIN ============ */
+  #login {
+    min-height:100dvh; display:flex; align-items:center; justify-content:center; padding:24px;
+    background:linear-gradient(160deg,#0f766e 0%,#0b5c55 40%,#0a3d38 100%);
+  }
+  .card {
+    width:100%; max-width:400px; background:var(--surface); border-radius:14px;
+    box-shadow:0 24px 60px rgba(3,30,27,.35); padding:40px 36px 30px;
+  }
+  .logo { display:flex; align-items:center; gap:9px; font-weight:700; font-size:20px; color:var(--brand); margin-bottom:26px; }
+  .logo svg { width:26px; height:26px; }
+  .card h1 { font-size:22px; font-weight:600; letter-spacing:-.2px; }
+  .card .lede { color:var(--dim); font-size:14px; margin:4px 0 24px; }
+  .field { margin-bottom:16px; }
+  .field label { display:block; font-size:13px; font-weight:500; color:var(--ink); margin-bottom:6px; }
+  .field input {
+    width:100%; padding:11px 13px; font-family:inherit; font-size:15px; color:var(--ink);
+    background:var(--surface); border:1px solid #cdd5df; border-radius:8px; outline:none;
+    transition:border-color .15s, box-shadow .15s;
+  }
+  .field input:focus { border-color:var(--brand); box-shadow:0 0 0 3px rgba(15,118,110,.15); }
+  .signin {
+    width:100%; margin-top:8px; padding:12px; font-family:inherit; font-size:15px; font-weight:600;
+    color:#fff; background:var(--brand); border:none; border-radius:8px; cursor:pointer;
+    transition:background .15s;
+  }
+  .signin:hover { background:var(--brand-dk); }
+  .signin:focus-visible { outline:3px solid rgba(15,118,110,.4); outline-offset:2px; }
+  .forgot { display:inline-block; margin-top:16px; font-size:13px; color:var(--brand); text-decoration:none; }
+  .forgot:hover { text-decoration:underline; }
+  #msg { min-height:18px; margin-top:14px; font-size:13px; color:var(--danger); }
+  .card .foot { margin-top:26px; padding-top:16px; border-top:1px solid var(--line); font-size:12px; color:var(--faint); text-align:center; }
+  .shake { animation:shake .38s; }
+  @keyframes shake { 0%,100%{transform:translateX(0)} 20%,60%{transform:translateX(-7px)} 40%,80%{transform:translateX(7px)} }
+
+  /* ============ APP ============ */
+  #app { display:none; height:100dvh; flex-direction:column; background:var(--surface); }
+  .topbar {
+    display:flex; align-items:center; gap:12px; padding:0 18px; height:58px;
+    border-bottom:1px solid var(--line); flex:0 0 auto; background:var(--surface);
+  }
+  .topbar .logo { margin:0; font-size:18px; }
+  .topbar .spacer { flex:1; }
+  .search {
+    flex:1; max-width:420px; height:38px; padding:0 14px; border:1px solid var(--line);
+    background:var(--raised); border-radius:20px; color:var(--ink); font-size:14px;
+    font-family:inherit; outline:none;
+  }
+  .search::placeholder { color:var(--dim); }
+  .search:focus { border-color:var(--brand); box-shadow:0 0 0 3px rgba(15,118,110,.12); }
+  .avatar { width:34px; height:34px; border-radius:50%; background:var(--brand); color:#fff;
+            display:flex; align-items:center; justify-content:center; font-weight:600; font-size:14px; }
+  .acct { font-size:13px; color:var(--dim); }
+
+  .main { flex:1; display:grid; grid-template-columns:210px 1fr; min-height:0; }
+  .folders { border-right:1px solid var(--line); padding:14px 10px; background:var(--surface); overflow:auto; }
+  .folders button {
+    width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:9px 12px; margin-bottom:2px; border:none; border-radius:8px; cursor:pointer;
+    background:transparent; font-family:inherit; font-size:14px; color:var(--ink); text-align:left;
+  }
+  .folders button:hover { background:var(--raised); }
+  .folders button.active { background:var(--brand-tint); color:var(--brand-dk); font-weight:600; }
+  .folders .cnt { font-size:12px; color:var(--faint); font-weight:600; }
+  .folders button.active .cnt { color:var(--brand-dk); }
+  .storage { margin-top:16px; padding:12px; font-size:12px; color:var(--faint); }
+  .storage .track { height:5px; background:var(--line); border-radius:3px; margin-top:7px; overflow:hidden; }
+  .storage .fill { height:100%; width:78%; background:var(--brand); }
+
+  .pane { min-height:0; overflow:auto; background:var(--surface); }
+
+  /* message list */
+  .listhead { padding:16px 22px 10px; font-size:15px; font-weight:600; color:var(--ink); border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--surface); }
+  .msg-row { display:grid; grid-template-columns:22px 190px 1fr auto; align-items:center; gap:12px;
+             padding:13px 22px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .msg-row:hover { background:var(--raised); }
+  .msg-row .dot { width:8px; height:8px; border-radius:50%; background:transparent; }
+  .msg-row.unread .dot { background:var(--brand); }
+  .msg-row .from { font-size:14px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .msg-row.unread .from { font-weight:700; }
+  .msg-row .snip { font-size:14px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .msg-row .snip b { color:var(--ink); font-weight:600; }
+  .msg-row.unread .snip b { font-weight:700; }
+  .msg-row .date { font-size:12px; color:var(--faint); white-space:nowrap; }
+
+  /* single message */
+  .reader { padding:20px 26px 60px; max-width:760px; }
+  .back { display:inline-flex; align-items:center; gap:7px; margin-bottom:18px; padding:7px 12px;
+          border:1px solid var(--line); background:var(--surface); border-radius:8px; cursor:pointer;
+          font-family:inherit; font-size:13px; color:var(--ink); }
+  .back:hover { background:var(--raised); }
+  .reader h2 { font-size:21px; font-weight:600; letter-spacing:-.2px; margin-bottom:16px; }
+  .msg-meta { display:flex; align-items:center; gap:12px; padding-bottom:16px; border-bottom:1px solid var(--line); margin-bottom:20px; }
+  .msg-meta .who { font-size:14px; }
+  .msg-meta .who b { display:block; font-weight:600; }
+  .msg-meta .who span { color:var(--dim); font-size:13px; }
+  .msg-meta .when { margin-left:auto; font-size:13px; color:var(--faint); }
+  .msg-body { font-size:15px; line-height:1.75; color:#26313f; white-space:pre-wrap; }
+  .msg-body .sig { color:var(--dim); }
+
+  .empty { padding:60px 22px; text-align:center; color:var(--faint); font-size:14px; }
+
+  @media (max-width:640px) {
+    .main { grid-template-columns:1fr; }
+    .folders { display:flex; gap:6px; overflow-x:auto; padding:10px; border-right:none; border-bottom:1px solid var(--line); }
+    .folders button { width:auto; white-space:nowrap; }
+    .storage { display:none; }
+    .msg-row { grid-template-columns:16px 1fr auto; }
+    .msg-row .snip { display:none; }
+    .acct { display:none; }
+    .search { display:none; }
+  }
+  @media (prefers-reduced-motion:reduce) { .shake { animation:none; } }
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<div id="login">
+  <div class="card" id="card">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
+      Haven Mail
+    </div>
+    <h1>Sign in</h1>
+    <p class="lede">to continue to your mailbox</p>
+
+    <div class="field">
+      <label for="u">Username</label>
+      <input id="u" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="groupN" />
+    </div>
+    <div class="field">
+      <label for="p">Password</label>
+      <input id="p" type="password" autocomplete="off" placeholder="Enter your password" />
+    </div>
+
+    <button class="signin" id="go">Sign in</button>
+    <a class="forgot" href="#" onclick="return false">Forgot password?</a>
+    <div id="msg"></div>
+
+    <div class="foot">Haven Mail &middot; private, self-hosted email</div>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app">
+  <div class="topbar">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
+      Haven Mail
+    </div>
+    <input class="search" id="q" placeholder="Search mail" autocomplete="off" />
+    <div class="spacer"></div>
+    <span class="acct" id="acct"></span>
+    <span class="avatar" id="av">?</span>
+  </div>
+  <div class="main">
+    <nav class="folders" id="folders"></nav>
+    <section class="pane" id="pane"></section>
+  </div>
+</div>
+
+<script>
+/* ===== credential table: username -> SHA-256(password) =====
+   group1:group12000 group2:group22002 group3:group32010
+   group4:group42015 group5:group52022 group6:group62029  */
+const CREDS = {
+  group1:"dbf0d3f0cf2bbbc690fc40bd9f8f3b202ea0d1f9100afcdf7909443c3e623822",
+  group2:"bb7bee71f978e9d2a66de89136e571e9e07d0afe7408e6a7b344e284ce6693b5",
+  group3:"26c3b54ec4c730d2635696d064fe6c68821b2bfac17beaec9725adb8ee9d83ff",
+  group4:"ca8c1bd7a508e3ca502ac685176f28783638e9e7437fea11d8b357b7f4cddbb5",
+  group5:"f7b964faadb4e44dac5e75f36175897b65158a1aec7cac0632f41dbcb975a3de",
+  group6:"5f91a0679c0da7b10628395092450844cbc52e249f79d01584c12d0d0a8e253a"
+};
+async function sha256(t){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(t));
+  return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("");}
+const $ = id => document.getElementById(id);
+
+/* ===== login ===== */
+async function attempt(){
+  const user=$("u").value.trim().toLowerCase(), pass=$("p").value, msg=$("msg");
+  if(!user||!pass){ msg.textContent="Enter your username and password."; return; }
+  msg.textContent="";
+  const hash=await sha256(pass);
+  if(CREDS[user] && CREDS[user]===hash){ openMailbox(user); }
+  else{
+    msg.textContent="Wrong username or password. Try again.";
+    $("card").classList.remove("shake"); void $("card").offsetWidth; $("card").classList.add("shake");
+    $("p").select();
+  }
+}
+$("go").addEventListener("click", attempt);
+$("p").addEventListener("keydown", e=>{ if(e.key==="Enter") attempt(); });
+$("u").addEventListener("keydown", e=>{ if(e.key==="Enter") $("p").focus(); });
+$("q").addEventListener("input", ()=>renderList(current));
+
+/* ===== per-team hideout coordinates =====
+   Each of the six logins decrypts to a DIFFERENT real US landmark, so no two
+   teams share an answer. This is your instructor ANSWER KEY. */
+const LOCATIONS = {
+  group1: { lat:"37.2350",  lng:"-115.8111" },  // Groom Lake, NV  (Area 51)
+  group2: { lat:"29.4259",  lng:"-98.4861"  },  // The Alamo, San Antonio, TX
+  group3: { lat:"37.8199",  lng:"-122.4783" },  // Golden Gate Bridge, San Francisco, CA
+  group4: { lat:"43.8791",  lng:"-103.4591" },  // Mount Rushmore, SD
+  group5: { lat:"40.6892",  lng:"-74.0445"  },  // Statue of Liberty, New York, NY
+  group6: { lat:"47.6205",  lng:"-122.3493" }   // Space Needle, Seattle, WA
+};
+
+/* ===== plot emails (the ones that matter) ===== */
+function plotEmails(loc){
+  return {
+    security: { id:1, folder:"inbox", unread:true, from:"Haven Security", addr:"security@haven.mail",
+      date:"9:14 AM", subject:"New sign-in to your account",
+      snippet:"We noticed a new sign-in from a device we don't recognize",
+      body:
+`We noticed a new sign-in to your Haven Mail account from a device we don't recognize:
+
+    Device:    Chrome on Ubuntu Linux
+    Location:  Toledo, OH
+
+If this was you, you can ignore this message. If you don't recognize this activity, change your password immediately.
+
+The Haven Security Team` },
+
+    vspot: { id:2, folder:"inbox", unread:true, from:"V.", addr:"v.relay@nightbox-mail.net",
+      date:"Yesterday", subject:"Re: the spot",
+      snippet:"everything's set. i'm not putting the meeting point in writing",
+      body:
+`everything's set on my end.
+
+i'm NOT putting the meeting point in writing again after last time. ray already sent you the coordinates — they're sitting in one of his emails. dig them out and don't lose them this time.
+
+burn this when you're done. seriously.
+
+V.` },
+
+    mom: { id:3, folder:"inbox", unread:true, from:"Mom", addr:"m.dawson@haven.mail",
+      date:"Thu", subject:"call me back please",
+      snippet:"you never pick up. are you eating okay? call me",
+      body:
+`you never pick up your phone.
+
+are you eating okay? you look thin in the photos. call me when you get this, i don't like not hearing from you for this long.
+
+love, Mom` },
+
+    raydecoy: { id:4, folder:"inbox", unread:false, from:"Uncle Ray", addr:"ray.dawson@haven.mail",
+      date:"Sun", subject:"Re: thanksgiving",
+      snippet:"your aunt wants to know if you're coming this year",
+      body:
+`your aunt wants to know if you're coming for thanksgiving this year. she's already arguing with everybody about the turkey.
+
+let me know so she can plan the seating. and CALL YOUR MOTHER, she worries about you.
+
+  Ray` },
+
+    raykey: { id:5, folder:"inbox", unread:false, from:"Uncle Ray", addr:"ray.dawson@haven.mail",
+      date:"Fri", subject:"Re: saturday",
+      snippet:"good to hear from you. same plan as we talked about",
+      body:
+`good to hear from you.
+
+yeah, same plan as we talked about — i'll have everything set on my end, you don't need to worry about it. i'm not writing the whole thing out again, just drop this into your maps and it'll take you right to the spot:
+
+    ${loc.lat}, ${loc.lng}
+
+get there for 9 and don't bring anyone with you. text me when you're a few minutes out and i'll wave you in.
+
+  Ray` }
+  };
+}
+
+/* ===== filler pool: ordinary emails that clutter the inbox ===== */
+const DECOYS = [
+  {from:"Shiply", addr:"tracking@shiply.com", subject:"Your order has shipped", snippet:"Order #55-2213 is on the way", body:"Good news — your order is on the way.\n\n    Order:  #55-2213\n    ETA:    2-3 business days\n\nTrack it any time from your account."},
+  {from:"RiverPoint Bank", addr:"no-reply@riverpointbank.com", subject:"Your e-statement is ready", snippet:"Your monthly statement is now available", body:"Your e-statement for the account ending in 8842 is now available. Sign in to online banking to view it.\n\nPlease do not reply to this message."},
+  {from:"PowerCo", addr:"billing@powerco-utilities.com", subject:"Your electric bill is ready", snippet:"Your statement is now available", body:"Your electric statement is ready.\n\n    Amount due:  $94.13\n    Due date:    the 28th\n\nEnroll in autopay to avoid late fees."},
+  {from:"StreamHub", addr:"hello@streamhub.tv", subject:"New this month on StreamHub", snippet:"12 new titles just landed", body:"Your monthly lineup is here. 12 new titles just dropped, including three documentaries and that finale everyone's talking about."},
+  {from:"Grubly", addr:"receipts@grubly.com", subject:"Your receipt from Tony's Pizza", snippet:"Thanks for your order!", body:"Thanks for your order!\n\n    Total ...... $31.75\n\nDelivered to your door. Rate your driver in the app."},
+  {from:"LinkUp", addr:"notify@linkup.com", subject:"You appeared in 4 searches this week", snippet:"See who's been looking at your profile", body:"Your profile is getting noticed. You appeared in 4 searches this week. Upgrade to Premium to see who."},
+  {from:"BlockTalk", addr:"digest@blocktalk.com", subject:"5 new posts in your neighborhood", snippet:"Someone found a lost dog near Elm Street", body:"Here's what's happening near you:\n  - Lost dog found near Elm Street\n  - Yard sale this Saturday\n  - New coffee shop on 4th"},
+  {from:"GymFit", addr:"team@gymfit.com", subject:"We miss you at the gym!", snippet:"It's been a while", body:"It's been 3 weeks since your last visit. Come back this week and grab a free smoothie on us."},
+  {from:"HorizonAir", addr:"confirm@horizonair.com", subject:"Your e-ticket confirmation (HZ4-8827)", snippet:"Your upcoming trip is confirmed", body:"Your trip is confirmed.\n\n    Confirmation:  HZ4-8827\n    Seat:          21C\n\nCheck-in opens 24 hours before departure."},
+  {from:"Toledo Library", addr:"notices@toledolibrary.org", subject:"Item overdue: \"Advanced Knot Tying\"", snippet:"The following item is 6 days overdue", body:"This item is overdue:\n\n    Advanced Knot Tying, 3rd Edition\n    Due: 6 days ago\n\nPlease return it to any branch."},
+  {from:"CloudDrive", addr:"no-reply@clouddrive.com", subject:"You're running low on storage", snippet:"You've used 92% of your free space", body:"You're running low on storage. Upgrade your plan to keep syncing your files."},
+  {from:"Marketplace", addr:"deals@marketplace.com", subject:"Weekend deals are here", snippet:"Up to 40% off this weekend only", body:"Your weekend deals are here. Up to 40% off select items. Shop now before they're gone."},
+  {from:"BrightNews", addr:"daily@brightnews.com", subject:"Your morning briefing", snippet:"The 5 stories you need today", body:"Here are the 5 stories you need this morning. Read them in under 3 minutes."},
+  {from:"AppStore", addr:"no-reply@appstore.com", subject:"Your receipt", snippet:"Thank you for your purchase", body:"Thank you for your purchase.\n\n    Weather Pro ...... $2.99\n\nManage subscriptions in your account settings."},
+  {from:"Chatly", addr:"notify@chatly.com", subject:"You have 3 unread messages", snippet:"Tap to catch up on your chats", body:"You have 3 unread messages waiting. Open Chatly to catch up."},
+  {from:"CarePlus Pharmacy", addr:"rx@careplus.com", subject:"Your prescription is ready for pickup", snippet:"Ready at your local branch", body:"Your prescription is ready for pickup at your local branch. Bring a photo ID."},
+  {from:"Rewards", addr:"points@rewards-club.com", subject:"You've earned 250 points", snippet:"See what you can redeem", body:"You've earned 250 points this month. See what you can redeem in the rewards catalog."},
+  {from:"SurveyBox", addr:"survey@surveybox.com", subject:"How did we do?", snippet:"Rate your recent experience", body:"How did we do? Rate your recent experience in 30 seconds and we'll enter you to win a gift card."},
+  {from:"TechDeals", addr:"deals@techdeals.com", subject:"Price drop on items in your cart", snippet:"The item you saved is now cheaper", body:"An item you saved just dropped in price. Grab it before the deal ends."},
+  {from:"CalReminder", addr:"reminders@calreminder.com", subject:"Reminder: dentist at 2:00 PM", snippet:"You have an appointment tomorrow", body:"This is a reminder of your appointment tomorrow at 2:00 PM. Reply to reschedule."},
+  {from:"MoviePass", addr:"tickets@moviepass.com", subject:"Your tickets for Saturday", snippet:"Screen 4, 7:30 PM", body:"Your tickets are confirmed.\n\n    Screen 4  -  7:30 PM  -  2 seats\n\nShow this email at the door."},
+  {from:"Foodie Weekly", addr:"recipes@foodieweekly.com", subject:"7 dinners under 30 minutes", snippet:"This week's quick recipes", body:"This week: 7 dinners you can make in under 30 minutes. Tap to see the recipes."},
+  {from:"WaterWorks", addr:"billing@waterworks.gov", subject:"Your water bill is available", snippet:"View your latest statement", body:"Your latest water statement is available.\n\n    Amount due:  $41.20\n\nPay online to avoid a late fee."},
+  {from:"CodeCamp", addr:"hello@codecamp.io", subject:"Continue your Python streak", snippet:"You're on a 4-day streak!", body:"You're on a 4-day streak! Keep it going — today's lesson takes just 10 minutes."},
+  {from:"Photos", addr:"memories@photos-app.com", subject:"Your memories from this week", snippet:"Look back on your week", body:"We put together your memories from this week. Tap to look back."},
+  {from:"ParkNow", addr:"receipt@parknow.com", subject:"Parking receipt - Lot C", snippet:"Session ended, $6.00 charged", body:"Your parking session has ended.\n\n    Lot C  -  2h 15m  -  $6.00\n\nThanks for using ParkNow."},
+  {from:"NewsletterCo", addr:"weekly@newsletterco.com", subject:"This week in tech", snippet:"The headlines that mattered", body:"This week in tech: the headlines that mattered, summarized for you."},
+  {from:"CloudMusic", addr:"no-reply@cloudmusic.com", subject:"Your Weekly Mix is ready", snippet:"30 songs picked for you", body:"Your Weekly Mix is ready — 30 songs we think you'll like. Press play."},
+  {from:"Verifly", addr:"security@verifly.com", subject:"New login from a new device", snippet:"Was this you?", body:"We noticed a login to your Verifly account from a new device. If this wasn't you, secure your account."},
+  {from:"ShopMart", addr:"orders@shopmart.com", subject:"Your order is out for delivery", snippet:"Arriving today by 8 PM", body:"Your order is out for delivery and should arrive today by 8 PM."},
+  {from:"PetPals", addr:"news@petpals.com", subject:"Is your pet's food due for a refill?", snippet:"Reorder in one tap", body:"It's been a while since your last order. Reorder your pet's food in one tap."},
+  {from:"TicketHub", addr:"events@tickethub.com", subject:"Events near you this weekend", snippet:"Concerts, comedy, and more", body:"Events near you this weekend: concerts, comedy, and more. See what's on."},
+  {from:"CloudBackup", addr:"no-reply@cloudbackup.com", subject:"Backup completed successfully", snippet:"Your files are safe", body:"Your scheduled backup completed successfully. Your files are safe and up to date."},
+  {from:"JobBoard", addr:"alerts@jobboard.com", subject:"5 new jobs match your search", snippet:"New roles posted today", body:"5 new jobs match your saved search. Apply before they close."},
+  {from:"Insurely", addr:"policy@insurely.com", subject:"Your policy renews soon", snippet:"Review your coverage", body:"Your policy renews next month. Review your coverage and update anything that's changed."},
+  {from:"BrewClub", addr:"club@brewclub.com", subject:"Your monthly coffee ships Friday", snippet:"This month's roast is a light one", body:"Your monthly coffee ships Friday. This month's roast is a bright, light one."},
+  {from:"CityAlerts", addr:"alerts@cityoftoledo.gov", subject:"Street sweeping this week", snippet:"Move your car by 8 AM Tuesday", body:"Street sweeping is scheduled on your block this week. Move your car by 8 AM Tuesday to avoid a ticket."},
+  {from:"LangLearn", addr:"hi@langlearn.com", subject:"Don't break your streak!", snippet:"5 minutes keeps it alive", body:"Don't break your streak! Just 5 minutes today keeps it alive."},
+  {from:"Refundly", addr:"support@refundly.com", subject:"Your refund has been processed", snippet:"$18.40 is on its way back", body:"Your refund of $18.40 has been processed and should appear in 5-7 business days."},
+  {from:"HomeFix", addr:"quotes@homefix.com", subject:"Your repair quote is ready", snippet:"View your estimate", body:"Your repair quote is ready to view. Log in to see the estimate and book a time."},
+  {from:"CloudDocs", addr:"no-reply@clouddocs.com", subject:"\"Notes\" was shared with you", snippet:"You now have access", body:"A document named \"Notes\" was shared with you. You now have access to view it."},
+  {from:"FitTrack", addr:"summary@fittrack.com", subject:"Your weekly activity summary", snippet:"You hit your step goal 3 days", body:"Here's your week: you hit your step goal 3 of 7 days. Keep it up!"},
+  {from:"DealFinder", addr:"alerts@dealfinder.com", subject:"Flash sale ends tonight", snippet:"Last chance for 30% off", body:"Flash sale ends tonight at midnight. Last chance for 30% off sitewide."},
+  {from:"ClipService", addr:"billing@clipservice.com", subject:"Your subscription renewed", snippet:"Receipt for $9.99", body:"Your subscription renewed automatically.\n\n    Amount:  $9.99\n\nManage your plan any time."},
+  {from:"WeatherNow", addr:"alerts@weathernow.com", subject:"Rain expected tomorrow", snippet:"Grab an umbrella", body:"Rain is expected in your area tomorrow afternoon. Grab an umbrella before you head out."}
+];
+
+/* build a big descending list of plausible date labels */
+function makeDates(n){
+  const times=["3:42 PM","1:15 PM","11:52 AM","10:07 AM","8:33 AM"];
+  const days=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+  const months=["Apr","Mar","Feb","Jan","Dec"];
+  const out=[];
+  for(let i=0;i<n;i++){
+    if(i<3) out.push(times[i]);
+    else if(i<6) out.push("Yesterday");
+    else if(i<22) out.push(days[i%7]);
+    else { const m=months[Math.floor((i-22)/28)%months.length]; const day=28-((i-22)%28); out.push(m+" "+day); }
+  }
+  return out;
+}
+
+let ACCOUNT = "";
+let MAIL = [];   // built fresh per login so the coordinates match the team
+
+/* Build the suspect's mailbox for one team.
+   ~115 filler emails clutter the inbox. The plot emails are spliced into fixed
+   positions; the coordinates live in Uncle Ray's "Re: saturday" (id 5), buried
+   deep at index 71. The only trail is V.'s note pointing at "ray's emails",
+   and there are TWO Ray emails, so students must read to find the right one. */
+function buildMail(loc){
+  const P = plotEmails(loc);
+  const dates = makeDates(140);
+  const inbox = [];
+  for(let i=0;i<118;i++){
+    const d = DECOYS[(i*17 + 5) % DECOYS.length];
+    inbox.push({ ...d, id:1000+i, folder:"inbox", unread:(i%29===7), date:dates[i] });
+  }
+  // splice the plot emails into place (replaces the filler at that slot)
+  inbox[0]  = P.security;   // top
+  inbox[4]  = P.vspot;      // the pointer, near the top
+  inbox[11] = P.mom;
+  inbox[33] = P.raydecoy;   // first Ray email (family noise)
+  inbox[71] = P.raykey;     // coordinates, buried deep
+
+  const other = [
+    { id:20, folder:"drafts", unread:false, from:"Draft", addr:"(no recipient)",
+      date:"Tue", subject:"(no subject)", snippet:"we have the kids. they are fine. leave the",
+      body:`we have the kids. they are fine.\n\nleave the money in the blue duffel by the loading dock. no cops.\n\nwe will contact you again with the` },
+    { id:21, folder:"sent", unread:false, from:"Me", addr:"to: Uncle Ray",
+      date:"Fri", subject:"Re: saturday", snippet:"got it, i'll be there for 9. coming alone",
+      body:`got it. i'll be there for 9, coming alone like you said.\n\nstop worrying, i've got this handled.` },
+    { id:22, folder:"sent", unread:false, from:"Me", addr:"to: V.",
+      date:"Yesterday", subject:"Re: the spot", snippet:"fine, i deleted it. you worry too much",
+      body:`fine, i deleted it. you worry too much.\n\nnobody reads my email anyway.` },
+    { id:23, folder:"spam", unread:false, from:"REWARDS CENTER", addr:"winner@prize-claim-now.info",
+      date:"Wed", subject:"\u2b50 You've been selected for a $500 gift card!!!", snippet:"CONGRATULATIONS! Claim before it expires",
+      body:`CONGRATULATIONS!!!\n\nYou have been RANDOMLY SELECTED to receive a $500 gift card. Click below to CLAIM before it expires!\n\n[ CLAIM NOW ]` },
+    { id:24, folder:"spam", unread:false, from:"Delivery Notice", addr:"parcel@delivery-redirect.info",
+      date:"Wed", subject:"Your package could not be delivered", snippet:"Reschedule by confirming your details",
+      body:`We attempted to deliver your package but were unable to.\n\nTo reschedule, confirm your address and a small redelivery fee below.\n\n[ CONFIRM DETAILS ]` }
+  ];
+
+  return inbox.concat(other);
+}
+
+const FOLDERS = [
+  { id:"inbox",  label:"Inbox"  },
+  { id:"drafts", label:"Drafts" },
+  { id:"sent",   label:"Sent"   },
+  { id:"spam",   label:"Spam"   },
+  { id:"trash",  label:"Trash"  }
+];
+let current = "inbox";
+
+function openMailbox(user){
+  ACCOUNT = user + "@haven.mail";
+  MAIL = buildMail(LOCATIONS[user] || LOCATIONS.group1);
+  $("login").style.display = "none";
+  $("app").style.display = "flex";
+  $("acct").textContent = ACCOUNT;
+  $("av").textContent = user.charAt(0).toUpperCase() + (user.match(/\d/)||[""])[0];
+  renderFolders();
+  renderList("inbox");
+}
+
+function unreadCount(folder){ return MAIL.filter(m=>m.folder===folder && m.unread).length; }
+
+function renderFolders(){
+  const nav = $("folders"); nav.innerHTML = "";
+  FOLDERS.forEach(f=>{
+    const n = unreadCount(f.id);
+    const b = document.createElement("button");
+    b.className = (f.id===current ? "active" : "");
+    b.innerHTML = `<span>${f.label}</span>${n?`<span class="cnt">${n}</span>`:""}`;
+    b.addEventListener("click", ()=>{ current=f.id; renderFolders(); renderList(f.id); });
+    nav.appendChild(b);
+  });
+  const s = document.createElement("div");
+  s.className="storage";
+  s.innerHTML = `6.2 GB of 8 GB used<div class="track"><div class="fill"></div></div>`;
+  nav.appendChild(s);
+}
+
+function renderList(folder){
+  current = folder;
+  const pane = $("pane");
+  const q = ($("q") ? $("q").value : "").trim().toLowerCase();
+  let items = MAIL.filter(m=>m.folder===folder);
+  if(q){
+    // search sender / subject / preview only — NOT the body, so the buried
+    // coordinates can't be surfaced by searching for digits.
+    items = items.filter(m =>
+      (m.from+" "+m.subject+" "+m.snippet).toLowerCase().includes(q));
+  }
+  const label = FOLDERS.find(f=>f.id===folder).label;
+  let html = `<div class="listhead">${label}${q?` &mdash; ${items.length} result${items.length===1?"":"s"} for "${escapeHtml(q)}"`:""}</div>`;
+  if(!items.length){ html += `<div class="empty">No messages found.</div>`; }
+  items.forEach(m=>{
+    html += `<div class="msg-row ${m.unread?'unread':''}" data-id="${m.id}">
+      <span class="dot"></span>
+      <span class="from">${m.from}</span>
+      <span class="snip"><b>${m.subject}</b> — ${m.snippet}</span>
+      <span class="date">${m.date}</span>
+    </div>`;
+  });
+  pane.innerHTML = html;
+  pane.scrollTop = 0;
+  pane.querySelectorAll(".msg-row").forEach(row=>{
+    row.addEventListener("click", ()=>openMessage(+row.dataset.id));
+  });
+}
+
+function openMessage(id){
+  const m = MAIL.find(x=>x.id===id);
+  if(m.unread){ m.unread=false; renderFolders(); }
+  const pane = $("pane");
+  pane.innerHTML = `
+    <div class="reader">
+      <button class="back" id="back">&larr; Back to ${FOLDERS.find(f=>f.id===m.folder).label}</button>
+      <h2>${m.subject}</h2>
+      <div class="msg-meta">
+        <span class="avatar">${m.from.charAt(0).toUpperCase()}</span>
+        <span class="who"><b>${m.from}</b><span>${m.addr}</span></span>
+        <span class="when">${m.date}</span>
+      </div>
+      <div class="msg-body">${escapeHtml(m.body)}</div>
+    </div>`;
+  pane.scrollTop = 0;
+  $("back").addEventListener("click", ()=>renderList(m.folder));
+}
+
+function escapeHtml(s){ return s.replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+</script>
+</body>
+</html>
